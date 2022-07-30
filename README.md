@@ -1,3 +1,3 @@
 # EViT
 
-We will public related code recently
+The whole project description has been improved recently.
