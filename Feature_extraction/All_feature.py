@@ -25,5 +25,5 @@ if __name__ == '__main__':
     bitFiles = glob.glob(bit_path)
     pool = mul.Pool(4)
     rel = pool.map(main, bitFiles)
-    print('完成')
+    print('finish')
 
