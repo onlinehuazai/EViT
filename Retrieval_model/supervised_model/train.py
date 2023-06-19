@@ -37,7 +37,7 @@ train_transform = transforms.Compose([
 test_transform = transforms.Compose([transforms.ToTensor()])
 
 train_data_EViT = EViTPair(img_data=train_data, huffman_feature=train_huffman_feature, labels=train_label,  transform=train_transform)
-train_loader = DataLoader(train_data_EViT, batch_size=35, shuffle=True, num_workers=5, pin_memory=True, drop_last=True)
+train_loader = DataLoader(train_data_EViT, batch_size=64, shuffle=True, num_workers=5, pin_memory=True, drop_last=True)
 test_data_EViT = EViTPair(img_data=test_data, huffman_feature=test_huffman_feature, labels=test_label, transform=test_transform)
 test_loader = DataLoader(test_data_EViT, batch_size=10, shuffle=False, num_workers=5, pin_memory=True)
 
