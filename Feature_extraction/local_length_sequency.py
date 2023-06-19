@@ -11,7 +11,7 @@ def length_sequence_each_component(accof, dccof, row, col, type, N=8):
     retFeature = np.zeros((int(row*col/64), 64))
     blockIndex = 0
     Eob = np.where(acarr == 999)[0]
-    count = 0  # 计算 Eob 位置
+    count = 0  # Eob position
     dc_idx = 0
     ac_idx = 0
     for m in range(0, row, N):
@@ -24,9 +24,9 @@ def length_sequence_each_component(accof, dccof, row, col, type, N=8):
             az = np.zeros(64 - acc.shape[0])
             acc = np.append(acc, az)
 
-            # 对 acc计算长度
+            # acc length
             coePosition = 0
-            # 对非0系数提取位数信息
+            # non-zero
             for coefficient in acc:
                 if coefficient == 0:
                     retFeature[blockIndex, coePosition] = 0
