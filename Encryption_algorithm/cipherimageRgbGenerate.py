@@ -1,25 +1,22 @@
 ## generate cipherimage
 import numpy as np
-from .JPEG.jacdecColorHuffman import jacdecColor
-from .JPEG.jdcdecColorHuffman import jdcdecColor
-from .JPEG.invzigzag import invzigzag
+from JPEG.jacdecColorHuffman import jacdecColor
+from JPEG.jdcdecColorHuffman import jdcdecColor
+from JPEG.invzigzag import invzigzag
 import cv2
-from .JPEG.rgbandycbcr import ycbcr2rgb, rgb2ycbcr
-import glob
-import tqdm
-from .JPEG.DCT import idctJPEG
-from .JPEG.Quantization import iQuantization
-from .encryption_utils import loadEncBit
+from JPEG.rgbandycbcr import ycbcr2rgb, rgb2ycbcr
+from JPEG.DCT import idctJPEG
+from JPEG.Quantization import iQuantization
+import os
 
 
 def deEntropy(acall, dcall, row, col, type, N=8, QF = 100):
-    accof = acall
-    dccof = dcall
-    kk, acarr = jacdecColor(accof, type)
-    kk, dcarr = jdcdecColor(dccof, type)
+    _, acarr = jacdecColor(acall, type)
+    _, dcarr = jdcdecColor(dcall, type)
     acarr = np.array(acarr)
     dcarr = np.array(dcarr)
-
+    row = int(row)
+    col = int(col)
     Eob = np.where(acarr == 999)
     Eob = Eob[0]
     count = 0
@@ -42,38 +39,16 @@ def deEntropy(acall, dcall, row, col, type, N=8, QF = 100):
     return xq
 
 
-def Gen_cipher_images():
-    dcallY, acallY, dcallCb, acallCb, dcallCr, acallCr, img_size = loadEncBit()
-    cipherimage_Y = []
-    cipherimage_Cb = []
-    cipherimage_Cr = []
-
-    for k in tqdm.tqdm([i for i in range(len(dcallY))]):
-        row, col = img_size[k]
-        cipherimage_Y.append(deEntropy(acallY[k], dcallY[k], row, col, 'Y'))
-        cipherimage_Cb.append(deEntropy(acallCb[k], dcallCb[k], row, col, 'C'))
-        cipherimage_Cr.append(deEntropy(acallCr[k], dcallCr[k], row, col, 'C'))
-
-    np.save("../data/cipherimage_Y.npy", cipherimage_Y)
-    np.save("../data/cipherimage_Cb.npy", cipherimage_Cb)
-    np.save("../data/cipherimage_Cr.npy", cipherimage_Cr)
-
-    srcFiles = glob.glob('../data/plainimages/*.jpg')
-    cipherimage_all = []
-    for k in tqdm.tqdm([i for i in range(len(dcallY))]):
-        row, col = img_size[k]
-        cipherimage = np.zeros([row, col, 3])
-        cipher_Y = cipherimage_Y[k]
-        cipher_cb = cipherimage_Cb[k]
-        cipher_cr = cipherimage_Cr[k]
-        cipherimage[:, :, 0] = cipher_Y
-        cipherimage[:, :, 1] = cipher_cb
-        cipherimage[:, :, 2] = cipher_cr
-        cipherimage = np.round(cipherimage)
-        cipherimage = cipherimage.astype(np.uint8)
-        cipherimage = ycbcr2rgb(cipherimage)
-        cipherimage_all.append(cipherimage)
-        merged = cv2.merge([cipherimage[:, :, 2], cipherimage[:, :, 1], cipherimage[:, :, 0]])
-        cv2.imwrite('../data/cipherimages/{}'.format(srcFiles[k].split("/")[-1].split("\\")[-1]), merged,[int(cv2.IMWRITE_JPEG_QUALITY), 100])
-
-    # print('{} pictures completed.'.format(k+1))
+def Gen_cipher_images(dcallY, acallY, dcallCb, acallCb, dcallCr, acallCr, img_size, path):
+    cipher_Y = deEntropy(acallY, dcallY, img_size[0], img_size[1], 'Y')
+    cipher_cb = deEntropy(acallCb, dcallCb, img_size[0], img_size[1], 'U')
+    cipher_cr = deEntropy(acallCr, dcallCr, img_size[0], img_size[1], 'V')
+    cipherimage = np.dstack([cipher_Y, cipher_cb, cipher_cr])
+    # if not os.path.exists('../data/cipherimages/{}'.format(path.split('\\')[-2])):
+    #     os.mkdir('../data/cipherimages/{}'.format(path.split('\\')[-2]))
+    cipherimage = np.round(cipherimage)
+    cipherimage = cipherimage.astype(np.uint8)
+    cipherimage = ycbcr2rgb(cipherimage)
+    merged = cv2.merge([cipherimage[:, :, 2], cipherimage[:, :, 1], cipherimage[:, :, 0]])
+    cv2.imwrite('../data/cipherimages/{}'.format(path.split("\\")[-1]), merged, [int(cv2.IMWRITE_JPEG_QUALITY), 100])
+    print('pictures completed')
