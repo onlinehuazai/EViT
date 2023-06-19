@@ -1,20 +1,26 @@
 ## laod plain-images and secret keys
+import numpy as np
 import scipy.io as scio
-from .encryption_utils import ksa
-from .encryption_utils import prga
+from encryption_utils import ksa
+from encryption_utils import prga
+from encryption_utils import yates_shuffle
 import tqdm
-from .encryption_utils import loadImageSet
-from .JPEG.rgbandycbcr import rgb2ycbcr
+from encryption_utils import loadImageSet, loadImageFiles
+from JPEG.rgbandycbcr import rgb2ycbcr
 import cv2
 import copy
-from .JPEG.jdcencColor import jdcencColor
-from .JPEG.zigzag import zigzag
-from .JPEG.jacencColor import jacencColor
-from .JPEG.Quantization import *
-from .cipherimageRgbGenerate import Gen_cipher_images
+from JPEG.jdcencColor import jdcencColor
+from JPEG.zigzag import zigzag
+from JPEG.invzigzag import invzigzag
+from JPEG.jacencColor import jacencColor
+from JPEG.Quantization import *
+from cipherimageRgbGenerate import Gen_cipher_images
+import multiprocessing as mul
+import datetime
+import glob
 
 
-def encryption_each_component(image_component, keys, type, row, col, N, QF):
+def encryption_each_component(image_component, keys, p_key, type, row, col, N, QF):
     allblock8 = np.zeros([8, 8, int(row * col / (8 * 8))])
     allblock8_number = 0
     for m in range(0, row, N):
@@ -23,6 +29,15 @@ def encryption_each_component(image_component, keys, type, row, col, N, QF):
             allblock8[:, :, allblock8_number] = t
             allblock8_number = allblock8_number + 1
 
+    # block shuffle
+    block8_number = int((row * col) / (8 * 8))
+    data = [i for i in range(0, block8_number)]
+    p_block = yates_shuffle(data, p_key)
+    allblock8_permute = copy.copy(allblock8)
+    for i in range(0, len(p_block)):
+        allblock8_permute[:, :, i] = allblock8[:, :, p_block[i]-1]
+    allblock8 = copy.copy(allblock8_permute)
+    del allblock8_permute
     # Huffman coding
     dc = 0
     dccof= []
@@ -61,21 +76,55 @@ def encryption_each_component(image_component, keys, type, row, col, N, QF):
     return dccof, accof
 
 
-def encryption(img, keyY, keyCb, keyCr, QF, N=8):
-    # N: block size
-    # QF: quality factor
+def get_size(img):
+    row, col, _ = img.shape
+
+    # if row > col:
+    #     img = cv2.resize(img, (128, 192))
+    # else:
+    #     img = cv2.resize(img, (192, 128))
+
     row, col, _ = img.shape
     plainimage = rgb2ycbcr(img)
-    plainimage = plainimage.astype(np.float64)
+    plainimage = plainimage.astype(np.float16)
+
     Y = plainimage[:, :, 0]
     Cb = plainimage[:, :, 1]
     Cr = plainimage[:, :, 2]
-    # Y component
-    dccofY, accofY = encryption_each_component(Y, keyY, type='Y', row=row, col=col, N=N, QF=QF)
-    ## Cb and Cr component
-    dccofCb, accofCb = encryption_each_component(Cb, keyCb, type='Cb', row=row, col=col, N=N, QF=QF)
-    dccofCr, accofCr = encryption_each_component(Cr, keyCr, type='Cr', row=row, col=col, N=N, QF=QF)
 
+    for i in range(0, int(8 * np.ceil(col / 8) - col)):
+        Y = np.c_[Y, Y[:, -1]]
+        Cb = np.c_[Cb, Cb[:, -1]]
+        Cr = np.c_[Cr, Cr[:, -1]]
+
+    for i in range(0, int(8 * np.ceil(row / 8) - row)):
+        Y = np.r_[Y, [Y[-1, :]]]
+        Cb = np.r_[Cb, [Cb[-1, :]]]
+        Cr = np.r_[Cr, [Cr[-1, :]]]
+    return 8 * np.ceil(row / 8), 8 * np.ceil(col / 8), Y, Cb, Cr
+
+
+
+def encryption(Y, Cb, Cr, keyY, keyCb, keyCr, p_keyY, p_keyCb, p_keyCr, QF, N, row, col):
+    # N: block size
+    # QF: quality factor
+
+    row = int(row)
+    col = int(col)
+    # Cb = cv2.resize(Cb,
+    #                 (int(col / 2), int(row / 2)),
+    #                 interpolation=cv2.INTER_CUBIC)
+    # Cr = cv2.resize(Cr,
+    #                 (int(col / 2), int(row / 2)),
+    #                 interpolation=cv2.INTER_CUBIC)
+
+    # Y component
+    dccofY, accofY = encryption_each_component(Y, keyY, p_keyY, type='Y', row=row, col=col, N=N, QF=QF)
+    ## Cb and Cr component
+    dccofCb, accofCb = encryption_each_component(Cb, keyCb, p_keyCb, type='Cb', row=int(row), col=int(col),
+                                                 N=N, QF=QF)
+    dccofCr, accofCr = encryption_each_component(Cr, keyCr, p_keyCr, type='Cr', row=int(row), col=int(col),
+                                                 N=N, QF=QF)
     accofY = accofY.astype(np.int8)
     dccofY = dccofY.astype(np.int8)
     accofCb = accofCb.astype(np.int8)
@@ -85,96 +134,48 @@ def encryption(img, keyY, keyCb, keyCr, QF, N=8):
     return accofY, dccofY, accofCb, dccofCb, accofCr, dccofCr
 
 
-## read plain-images
-def read_plain_images():
-    plainimage_all = loadImageSet('../data/plainimages/*.jpg')
-    # save size information
-    img_size = []
-    for temp in plainimage_all:
-        row, col, _ = temp.shape
-        img_size.append((row, col))
-    np.save("../data/plainimages.npy", plainimage_all)
-    np.save("../data/img_size.npy", img_size)
-    return plainimage_all
+
+def main(imageFile):
+    # read plain-image
+    # if imageFile.split('\\')[-1].split('.')[0] not in bitFiles_pre:
+    img = cv2.imread(imageFile)
+    img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+    # img = cv2.resize(img, (256, 192))
+    row, col, Y, Cb, Cr = get_size(img)
+    # if row * col > max_key_len:
+    # encryption_keyY, encryption_keyCb, encryption_keyCr = generate_keys(row * col)
+
+    accofY, dccofY, accofCb, dccofCb, accofCr, dccofCr = encryption(Y, Cb, Cr, encryption_keyY,
+                                                                    encryption_keyCb,
+                                                                    encryption_keyCr,
+                                                                    p_keyY, p_keyCb, p_keyCr,
+                                                                    QF,
+                                                                    N=8, row=row, col=col)
+
+    # if not os.path.exists(bit_path + imageFile.split('\\')[-2]):
+    #     os.mkdir(bit_path + imageFile.split('\\')[-2])
+    img_size = (row, col)
+    np.save(bit_path + imageFile.split('\\')[-1].split('.')[0] + '.npy',
+            {'accofY': accofY, 'dccofY': dccofY, 'accofCb': accofCb, 'dccofCb': dccofCb, 'accofCr': accofCr,
+             'dccofCr': dccofCr, 'size': img_size})
+    print(imageFile + 'process success!')
+    # Gen_cipher_images(dccofY, accofY, dccofCb, accofCb, dccofCr, accofCr, img_size, imageFile)
 
 
-## generate encryption key and embedding key
-# keys are independent from plainimage
-# encryption key generation - RC4
-def generate_keys(control_length=256*284):
-    # secret keys
-    data_lenY = np.ones([1, int(control_length)])
-    keyY = scio.loadmat('../data/keyY.mat')  # Y component encryption key
-    keyY = keyY['keyY'][0]
-    keyCb = scio.loadmat('../data/keyCb.mat')  # Cb component encryption key
-    keyCb = keyCb['keyCb'][0]
-    keyCr = scio.loadmat('../data/keyCr.mat')  # Cr component encryption key
-    keyCr = keyCr['keyCr'][0]
-    # keys stream
-    s = ksa(keyY)
-    r = prga(s, data_lenY)
-    encryption_keyY = ''
-    for i in range(0, len(r)):
-        temp1 = str(r[i])
-        temp2 = bin(int(temp1, 10))
-        temp2 = temp2[2:]
-        for j in range(0, 8 - len(temp2)):
-            temp2 = '0' + temp2
-        encryption_keyY = encryption_keyY + temp2
-
-    data_lenC = np.ones([1, int(control_length // 4)])
-    s1 = ksa(keyCb)
-    r1 = prga(s1, data_lenC)
-    encryption_keyCb = ''
-    for i in range(0, len(r1)):
-        temp1 = str(r1[i])
-        temp2 = bin(int(temp1, 10))
-        temp2 = temp2[2:]
-        for j in range(0, 8 - len(temp2)):
-            temp2 = '0' + temp2
-        encryption_keyCb = encryption_keyCb + temp2
-
-    s2 = ksa(keyCr)
-    r2 = prga(s2, data_lenC)
-    encryption_keyCr = ''
-    for i in range(0, len(r2)):
-        temp1 = str(r2[i])
-        temp2 = bin(int(temp1, 10))
-        temp2 = temp2[2:]
-        for j in range(0, 8 - len(temp2)):
-            temp2 = '0' + temp2
-        encryption_keyCr = encryption_keyCr + temp2
-
-    return encryption_keyY, encryption_keyCb, encryption_keyCr
-
+QF = 100
+max_key_len = 256*384
+# load keys
+#####################
+imageFiles = loadImageFiles('../data/plainimages/*.jpg')
+bit_path = '../data/JPEGBitStream/'
+# read bitstream
+bitFiles = glob.glob(bit_path+'/*.npy')
 
 if __name__ == '__main__':
-    ## image encryption
-    QF = 100
-    acallY = []
-    dcallY = []
-    acallCb = []
-    dcallCb = []
-    acallCr = []
-    dcallCr = []
-    plainimage_all = read_plain_images()
-    encryption_keyY, encryption_keyCb, encryption_keyCr = generate_keys()
-    for k in tqdm.tqdm([i for i in range(len(plainimage_all))]):
-        img = [k]
-        accofY, dccofY, accofCb, dccofCb, accofCr, dccofCr = encryption(img, encryption_keyY, encryption_keyCb, encryption_keyCr, QF)
-
-        acallY.append(accofY)
-        dcallY.append(dccofY)
-        acallCb.append(accofCb)
-        dcallCb.append(dccofCb)
-        acallCr.append(accofCr)
-        dcallCr.append(dccofCr)
-
-    np.save('../data/acallY.npy', acallY)
-    np.save('../data/dcallY.npy', dcallY)
-    np.save('../data/acallCb.npy', acallCb)
-    np.save('../data/dcallCb.npy', dcallCb)
-    np.save('../data/acallCr.npy', acallCr)
-    np.save('../data/dcallCr.npy', dcallCr)
-    # generate cipher-images
-    Gen_cipher_images()
+    # image encryption
+    now_time = datetime.datetime.now()
+    print(now_time)
+    pool = mul.Pool(3)
+    rel = pool.map(main, imageFiles)
+    now_time = datetime.datetime.now()
+    print(now_time)
